@@ -1,5 +1,5 @@
 // groq.js - Groq API integration for Speech-to-Text (Whisper) and Chat Completion (Llama models)
-const { BrowserWindow, ipcMain } = require('electron');
+const { BrowserWindow, ipcMain, desktopCapturer } = require('electron');
 const https = require('https');
 const { URL } = require('url');
 const { getCondensedSystemPrompt } = require('./prompts');
@@ -63,10 +63,71 @@ let generationSettings = {
     maxOutputTokens: 4096, // Default for interview mode, allows detailed technical answers
 };
 
+const VOICE_FAST_MAX_TOKENS = 1536;
+const VOICE_HISTORY_LIMIT_WITH_SCREEN = 6;
+const VOICE_HISTORY_LIMIT_TEXT_ONLY = 8;
+const VOICE_SCREENSHOT_SIZE = { width: 1280, height: 720 };
+const VOICE_SCREENSHOT_JPEG_QUALITY = 60;
+
 function sendToRenderer(channel, data) {
     const windows = BrowserWindow.getAllWindows();
     if (windows.length > 0) {
         windows[0].webContents.send(channel, data);
+    }
+}
+
+function getRecentConversationHistory(limit = 10) {
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 10;
+    if (safeLimit <= 0) {
+        return [];
+    }
+    return conversationHistory.slice(-safeLimit);
+}
+
+function buildVoiceAndScreenPrompt(transcription, hasScreenContext) {
+    const normalized = String(transcription || '').trim();
+    if (!hasScreenContext) {
+        return normalized;
+    }
+
+    return `${normalized}
+
+Use the screenshot to correct speech recognition mistakes and identify the exact question.
+If speech and screen differ, trust the screen question.
+Answer directly.`;
+}
+
+async function captureCurrentScreenBase64() {
+    try {
+        const sources = await desktopCapturer.getSources({
+            types: ['screen'],
+            thumbnailSize: VOICE_SCREENSHOT_SIZE,
+            fetchWindowIcons: false,
+        });
+
+        if (!sources || sources.length === 0) {
+            return null;
+        }
+
+        const source = sources[0];
+        if (!source || !source.thumbnail || source.thumbnail.isEmpty()) {
+            return null;
+        }
+
+        const jpeg = source.thumbnail.toJPEG(VOICE_SCREENSHOT_JPEG_QUALITY);
+        if (!jpeg || jpeg.length === 0) {
+            return null;
+        }
+
+        const base64 = jpeg.toString('base64');
+        if (!base64 || base64.length < 100) {
+            return null;
+        }
+
+        return base64;
+    } catch (error) {
+        console.warn('[GROQ] Failed to capture screen context:', error.message);
+        return null;
     }
 }
 
@@ -350,7 +411,7 @@ async function transcribeWithGroq(wavBuffer) {
 /**
  * Send chat completion request to Groq Llama model
  */
-async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData = null) {
+async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData = null, options = {}) {
     return new Promise((resolve, reject) => {
         if (!groqApiKey) {
             reject(new Error('Groq API key not initialized'));
@@ -358,6 +419,20 @@ async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData 
         }
 
         const modelId = LLAMA_MODELS[model] || LLAMA_MODELS['llama-4-maverick'];
+        const historyLimit =
+            options.historyLimit !== undefined
+                ? options.historyLimit
+                : imageData
+                    ? VOICE_HISTORY_LIMIT_WITH_SCREEN
+                    : 10;
+        const historyForRequest = getRecentConversationHistory(historyLimit);
+        let effectiveMaxTokens = generationSettings.maxOutputTokens;
+        if (options.maxTokens !== undefined) {
+            const parsedMaxTokens = Number(options.maxTokens);
+            if (Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0) {
+                effectiveMaxTokens = Math.min(effectiveMaxTokens, Math.floor(parsedMaxTokens));
+            }
+        }
 
         // Build messages array with conversation history
         const messages = [
@@ -365,7 +440,7 @@ async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData 
         ];
 
         // Add conversation history for context
-        for (const turn of conversationHistory) {
+        for (const turn of historyForRequest) {
             messages.push({ role: 'user', content: turn.userMessage });
             messages.push({ role: 'assistant', content: turn.assistantResponse });
         }
@@ -389,13 +464,13 @@ async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData 
             messages: messages,
             temperature: generationSettings.temperature,
             top_p: generationSettings.topP,
-            max_tokens: generationSettings.maxOutputTokens,
+            max_tokens: effectiveMaxTokens,
             stream: true
         });
 
         // Log request size for debugging
         let requestSizeKB = (Buffer.byteLength(requestBody) / 1024).toFixed(1);
-        console.log(`[GROQ] Request body size: ${requestSizeKB}KB (${messages.length} messages, ${conversationHistory.length} history turns)`);
+        console.log(`[GROQ] Request body size: ${requestSizeKB}KB (${messages.length} messages, ${historyForRequest.length} history turns, maxTokens=${effectiveMaxTokens})`);
 
         // Groq has ~4MB request limit, but we should stay well under for performance
         // If request is too large, clear history and retry with just current message
@@ -412,7 +487,7 @@ async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData 
                 trimmedMessages.push({
                     role: 'user',
                     content: [
-                        { type: 'image_url', image_url: { url: `data:image/png;base64,${imageData}` } },
+                        { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageData}` } },
                         { type: 'text', text: userMessage }
                     ]
                 });
@@ -426,7 +501,7 @@ async function chatWithLlama(userMessage, model = 'llama-4-maverick', imageData 
                 messages: trimmedMessages,
                 temperature: generationSettings.temperature,
                 top_p: generationSettings.topP,
-                max_tokens: generationSettings.maxOutputTokens,
+                max_tokens: effectiveMaxTokens,
                 stream: true
             });
             requestSizeKB = (Buffer.byteLength(requestBody) / 1024).toFixed(1);
@@ -677,6 +752,7 @@ async function processAudioBuffer(model = null) {
 
         // Step 1: Transcribe with Whisper
         const wavBuffer = pcmToWav(combinedPcm);
+        const screenCapturePromise = captureCurrentScreenBase64();
         const transcription = await transcribeWithGroq(wavBuffer);
 
         if (!transcription || !transcription.trim()) {
@@ -686,16 +762,23 @@ async function processAudioBuffer(model = null) {
             return null;
         }
 
+        const screenContext = await screenCapturePromise;
+        const hasScreenContext = !!screenContext;
+        const fusedPrompt = buildVoiceAndScreenPrompt(transcription, hasScreenContext);
+
         // Send transcription to renderer
         sendToRenderer('groq-transcription', transcription);
-        sendToRenderer('update-status', 'Generating...');
+        sendToRenderer('update-status', hasScreenContext ? 'Analyzing screen + question...' : 'Generating...');
 
         // Step 2: Send transcription to chat model for response
         let response;
         if (chatModel === 'gemini-2.5-flash-lite') {
-            response = await chatWithGeminiText(transcription);
+            response = await chatWithGeminiText(fusedPrompt, screenContext || null);
         } else {
-            response = await chatWithLlama(transcription, chatModel);
+            response = await chatWithLlama(fusedPrompt, chatModel, screenContext || null, {
+                maxTokens: VOICE_FAST_MAX_TOKENS,
+                historyLimit: hasScreenContext ? VOICE_HISTORY_LIMIT_WITH_SCREEN : VOICE_HISTORY_LIMIT_TEXT_ONLY,
+            });
         }
 
         // Reset speech tracking state
@@ -756,6 +839,7 @@ async function flushAudioBuffer(model = null) {
         contextBuffer = [];
 
         const wavBuffer = pcmToWav(combinedPcm);
+        const screenCapturePromise = captureCurrentScreenBase64();
         const transcription = await transcribeWithGroq(wavBuffer);
 
         if (!transcription || !transcription.trim()) {
@@ -765,15 +849,22 @@ async function flushAudioBuffer(model = null) {
             return null;
         }
 
+        const screenContext = await screenCapturePromise;
+        const hasScreenContext = !!screenContext;
+        const fusedPrompt = buildVoiceAndScreenPrompt(transcription, hasScreenContext);
+
         sendToRenderer('groq-transcription', transcription);
-        sendToRenderer('update-status', 'Generating...');
+        sendToRenderer('update-status', hasScreenContext ? 'Analyzing screen + question...' : 'Generating...');
 
         // Send transcription to chat model for response
         let response;
         if (chatModel === 'gemini-2.5-flash-lite') {
-            response = await chatWithGeminiText(transcription);
+            response = await chatWithGeminiText(fusedPrompt, screenContext || null);
         } else {
-            response = await chatWithLlama(transcription, chatModel);
+            response = await chatWithLlama(fusedPrompt, chatModel, screenContext || null, {
+                maxTokens: VOICE_FAST_MAX_TOKENS,
+                historyLimit: hasScreenContext ? VOICE_HISTORY_LIMIT_WITH_SCREEN : VOICE_HISTORY_LIMIT_TEXT_ONLY,
+            });
         }
 
         // Reset state
@@ -796,7 +887,7 @@ async function flushAudioBuffer(model = null) {
 /**
  * Send screenshot + text to Llama for analysis
  */
-async function analyzeWithLlama(text, imageData, model = 'llama-4-maverick') {
+async function analyzeWithLlama(text, imageData, model = 'llama-4-maverick', options = {}) {
     if (!groqApiKey) {
         console.error('[GROQ] No API key initialized');
         sendToRenderer('update-status', 'No API Key Found');
@@ -818,7 +909,7 @@ async function analyzeWithLlama(text, imageData, model = 'llama-4-maverick') {
             // Route to Gemini for screenshot analysis
             response = await chatWithGeminiText(finalText, imageData);
         } else {
-            response = await chatWithLlama(finalText, model, imageData);
+            response = await chatWithLlama(finalText, model, imageData, options);
         }
         // Status will be set to 'Listening...' / 'Ready' by the respective handler
         return response;
