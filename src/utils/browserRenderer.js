@@ -306,6 +306,28 @@
         return `${profileHint}${customPrompt ? `\n\n${customPrompt}` : ''}`;
     }
 
+
+    function isLikelyQuestionText(text) {
+        const normalized = normalizeSpeechText(text);
+        if (!normalized) {
+            return false;
+        }
+
+        if (normalized.includes('?')) {
+            return true;
+        }
+
+        const lower = normalized.toLowerCase();
+        const questionStarters = [
+            'what ', 'why ', 'how ', 'when ', 'where ', 'who ', 'which ', 'whom ',
+            'can you', 'could you', 'would you', 'will you', 'do you', 'did you', 'are you', 'is it',
+            'tell me', 'explain', 'describe', 'walk me through', 'give me',
+            'difference between', 'what is', 'what are', 'how would', 'why do',
+        ];
+
+        return questionStarters.some(prefix => lower.startsWith(prefix) || lower.includes(` ${prefix}`));
+    }
+
     function pushHistory(userText, assistantText) {
         state.history.push({ userText, assistantText });
         if (state.history.length > 10) {
@@ -337,6 +359,12 @@
         if (!normalized) {
             return;
         }
+
+        if (!isLikelyQuestionText(normalized)) {
+            console.log('[Web] Skipping non-question speech segment:', normalized);
+            return;
+        }
+
         state.speechQueue.push(normalized);
         processSpeechQueue().catch(error => {
             console.error('[Web] Speech queue processing failed:', error);
