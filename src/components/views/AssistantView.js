@@ -1064,6 +1064,7 @@ export class AssistantView extends LitElement {
     copyCurrentResponse() {
         const currentResponse = this.getCurrentResponse();
         if (currentResponse) {
+            const responseContainer = this.shadowRoot.querySelector('#responseContainer');
             // Extract code blocks from the response
             const codeBlocks = this.extractCodeBlocks(currentResponse);
             
@@ -1072,6 +1073,9 @@ export class AssistantView extends LitElement {
             if (codeBlocks.length > 0) {
                 // Copy all code blocks, separated by newlines if multiple
                 textToCopy = codeBlocks.join('\n\n');
+            } else if (responseContainer && responseContainer.innerText.trim()) {
+                // Copy rendered plain text so markdown markers are stripped out
+                textToCopy = responseContainer.innerText.trim();
             } else {
                 // Fallback to full response if no code blocks found
                 textToCopy = currentResponse;

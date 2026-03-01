@@ -338,10 +338,28 @@ GOOD (interview-ready): "The formula is **ŷ = β₀ + β₁x**, where β₀ is 
 
 REMEMBER: If someone asked you this face-to-face, you would NOT recite a textbook chapter. Keep it natural and brief.`;
 
+            const fastInterviewPrompt = systemPrompt + `
+
+============ CRITICAL INTERVIEW SPEED RULES ============
+
+You are helping someone in a LIVE SPOKEN interview. They will read your answer aloud.
+
+RULES:
+1. First sentence: short summary with the core answer.
+2. For difference questions, the first sentence must state the key difference immediately.
+3. Then add 3-4 short follow-up sentences in easy spoken English.
+4. Use a real example when it helps.
+5. Single facts or yes/no questions: 1 sentence.
+6. No markdown emphasis, no bullets, no headings, and no long templates.
+7. CODING questions: give the working code first, then add at most 2 short plain-text sentences if needed.
+8. SYSTEM DESIGN questions: ask 1-2 clarifying questions first, then stop.
+
+Ignore any earlier instruction that asks for long structured answers, multi-section templates, or presentation-style formatting unless the user explicitly asks for that depth.`;
+
             // Create a "session" object that uses generateContentStream internally
             // For coding/exam mode: use codingPrompt with aggressive direct answer instructions
             // For interview mode: use interviewPrompt with brevity override
-            const sessionPrompt = (mode === 'coding') ? codingPrompt : interviewPrompt;
+            const sessionPrompt = (mode === 'coding') ? codingPrompt : fastInterviewPrompt;
 
             session = {
                 model: regularModel,
@@ -444,9 +462,9 @@ REMEMBER: If someone asked you this face-to-face, you would NOT recite a textboo
                             // Exam/coding mode needs full output for detailed code solutions
                             if (currentMode === 'interview') {
                                 if (hasImage) {
-                                    effectiveMaxTokens = Math.min(4096, modelMaxTokens);
+                                    effectiveMaxTokens = Math.min(effectiveMaxTokens, 1536);
                                 } else {
-                                    effectiveMaxTokens = Math.min(effectiveMaxTokens, 1024);
+                                    effectiveMaxTokens = Math.min(effectiveMaxTokens, 768);
                                 }
                             }
 

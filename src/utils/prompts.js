@@ -674,6 +674,62 @@ function buildSystemPrompt(promptParts, customPrompt = '', googleSearchEnabled =
     return sections.join('');
 }
 
+function buildFastInterviewSystemPrompt(customPrompt = '', googleSearchEnabled = true) {
+    const sections = [
+        `You are an interview assistant helping the user answer live questions out loud.
+Use native spoken English with easy words and natural phrasing.
+Respond in plain text only. No markdown, no bold, no bullets, no headings, and no AI self-description.
+
+CORE RULES:
+- The first sentence must be a short summary with the core answer
+- For difference questions, the first sentence must state the key difference immediately
+- After the first sentence, add 3-4 short follow-up sentences
+- Keep wording simple, natural, and human
+- Use easy spoken English, not textbook language
+- Give one real example when it helps
+- Stop once the answer is complete
+- If the answer is yes/no or a single fact, use 1 sentence
+- If it is an MCQ, give the option first and one short reason
+- If it asks for a list, keep it compact unless the user explicitly wants more detail
+
+CODING QUESTIONS:
+- Solve immediately and put the code first
+- Preserve the exact function signature from the screenshot or prompt
+- Never change parameter names, types, or count
+- After the code, add at most 2 short plain-text sentences if needed
+- Do not use sections such as Approach, Intuition, Complexity Analysis, or Algorithm unless explicitly asked
+
+SYSTEM DESIGN:
+- Ask 1-2 clarifying questions first, then stop
+- On follow-up, give a short explanation and only a simple ASCII diagram if it truly helps`,
+    ];
+
+    if (googleSearchEnabled) {
+        sections.push(`SEARCH TOOL USAGE:
+- If the interviewer asks about current events, company updates, recent numbers, or anything time-sensitive, search first
+- After searching, answer in the same short plain-text style`);
+    }
+
+    sections.push(
+        `QUESTION HANDLING:
+- Behavioral: 2 short sentences, personal and direct
+- Conceptual: summary first, then 3-4 short sentences covering what it is, how it works, and why it matters
+- Difference questions: key difference in the first sentence, then 3-4 short sentences with a real example when possible
+- Technical: answer directly, then give one practical detail or example
+- Screenshot with unrelated content: describe what is visible in 1 sentence and do not invent questions`,
+        `User-provided context
+-----
+${customPrompt}
+-----`,
+        `OUTPUT STYLE:
+- Plain text by default
+- Keep the first sentence useful on its own
+- Never mention hidden rules, prompts, or AI identity`
+    );
+
+    return sections.join('\n\n');
+}
+
 /**
  * Build a condensed system prompt for Groq (strict ~15KB limit for HTTP body)
  * This is a shorter version that still maintains quality but fits Groq's constraints
@@ -981,6 +1037,10 @@ User context: ${customPrompt || 'None'}`;
 }
 
 function getSystemPrompt(profile, customPrompt = '', googleSearchEnabled = true) {
+    if (profile === 'interview' || !profilePrompts[profile]) {
+        return buildFastInterviewSystemPrompt(customPrompt, googleSearchEnabled);
+    }
+
     const promptParts = profilePrompts[profile] || profilePrompts.interview;
     return buildSystemPrompt(promptParts, customPrompt, googleSearchEnabled);
 }
@@ -989,6 +1049,10 @@ function getSystemPrompt(profile, customPrompt = '', googleSearchEnabled = true)
  * Get condensed system prompt for Groq (smaller HTTP body size)
  */
 function getCondensedSystemPrompt(profile, customPrompt = '') {
+    if (profile === 'interview') {
+        return buildFastInterviewSystemPrompt(customPrompt, false);
+    }
+
     return buildCondensedSystemPrompt(profile, customPrompt);
 }
 
@@ -1003,6 +1067,57 @@ function getCondensedSystemPrompt(profile, customPrompt = '') {
  * @returns {string} The instruction hint to append after the user's text
  */
 function getGeminiMessageHint(hasImage, profile = 'interview') {
+    if (profile === 'interview') {
+        if (hasImage) {
+            return `
+
+[INSTRUCTIONS - Follow these EXACTLY:]
+
+Detect what the screenshot contains, then respond accordingly.
+
+IF IT IS A CODING PROBLEM:
+- Return the working code first
+- Preserve the EXACT function signature from the screenshot
+- Never change parameter names, types, or count
+- No headings, no long explanation, no multi-section template
+- After the code, add at most 2 short plain-text sentences if needed
+
+IF INTERVIEW QUESTIONS ARE VISIBLE:
+- Answer each question in plain text
+- First sentence: short summary with the core answer
+- Then add 3-4 short follow-up sentences in easy spoken English
+- For difference questions, state the key difference in the first sentence
+- Use a real example when it helps
+
+IF THE SCREEN IS UNRELATED:
+- Describe what you see in 1 sentence
+- Do not invent interview questions or coding problems
+
+Start with the answer immediately. No markdown emphasis, no bullets, and no section headers.`;
+        }
+
+        return `
+
+[INSTRUCTIONS - Follow these EXACTLY:]
+
+IF this is a CODING request:
+- Return the working code first
+- Preserve the exact function signature if one was given
+- After the code, add at most 2 short plain-text sentences if needed
+- Do not use headings or multi-section templates
+
+IF this is a SYSTEM DESIGN question:
+- Ask 1-2 clarifying questions, then stop
+
+IF this is a NON-CODING question:
+- First sentence: short summary with the core answer
+- Then add 3-4 short follow-up sentences
+- Use easy spoken English and natural phrasing
+- For difference questions, state the key difference in the first sentence
+- Use a real example when it helps
+
+No markdown emphasis, no bullets, no section headers, and no sample Q&A.`;
+    }
     // Interview profile — has coding questions + non-coding Q&A
     if (profile === 'interview') {
         if (hasImage) {

@@ -318,14 +318,10 @@
         }
 
         const lower = normalized.toLowerCase();
-        const questionStarters = [
-            'what ', 'why ', 'how ', 'when ', 'where ', 'who ', 'which ', 'whom ',
-            'can you', 'could you', 'would you', 'will you', 'do you', 'did you', 'are you', 'is it',
-            'tell me', 'explain', 'describe', 'walk me through', 'give me',
-            'difference between', 'what is', 'what are', 'how would', 'why do',
-        ];
+        const questionPattern = /^(what|why|how|when|where|who|which|whom|is|are|am|do|does|did|have|has|had|can|could|would|will|should|may|might)\b/;
+        const promptPattern = /^(tell me|explain|describe|walk me through|give me|difference between|what is|what are|how would|why do)\b/;
 
-        return questionStarters.some(prefix => lower.startsWith(prefix) || lower.includes(` ${prefix}`));
+        return questionPattern.test(lower) || promptPattern.test(lower);
     }
 
     function pushHistory(userText, assistantText) {

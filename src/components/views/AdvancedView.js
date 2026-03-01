@@ -509,7 +509,7 @@ export class AdvancedView extends LitElement {
         'gemini-2.5-flash-lite_interview': {
             temperature: 0.7,
             topP: 0.9,
-            maxOutputTokens: 1024,
+            maxOutputTokens: 768,
         },
         // Gemini 3 Flash - Exam/Coding mode (detailed code solutions)
         'gemini-3-flash-preview_coding': {
@@ -527,20 +527,20 @@ export class AdvancedView extends LitElement {
         'llama-4-maverick_interview': {
             temperature: 0.7,
             topP: 0.95,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 1024,
         },
         // Groq Llama 4 Scout - Interview mode (balanced, enough for code + explanation)
         'llama-4-scout_interview': {
             temperature: 0.7,
             topP: 0.95,
-            maxOutputTokens: 4096,
+            maxOutputTokens: 1024,
         },
     };
 
     // Fallback defaults
     static DEFAULT_TEMPERATURE = 0.7;
     static DEFAULT_TOP_P = 0.95;
-    static DEFAULT_MAX_TOKENS = 4096;
+    static DEFAULT_MAX_TOKENS = 1024;
 
     constructor() {
         super();

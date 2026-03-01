@@ -1,8 +1,13 @@
-const { getSystemPrompt, profilePrompts } = require('../utils/prompts');
+const {
+    getSystemPrompt,
+    getCondensedSystemPrompt,
+    getGeminiMessageHint,
+    profilePrompts,
+} = require('../utils/prompts');
 
 describe('Prompt System Tests', () => {
     describe('Profile Prompts', () => {
-        it('has all required interview profiles', () => {
+        it('has all required profiles', () => {
             const requiredProfiles = ['interview', 'exam', 'sales', 'meeting', 'presentation', 'negotiation'];
 
             requiredProfiles.forEach(profile => {
@@ -14,46 +19,43 @@ describe('Prompt System Tests', () => {
             });
         });
 
-        it('interview profile has enhanced code generation format', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
+        it('exam profile still enforces comment-free code', () => {
+            const fullPrompt = (
+                profilePrompts.exam.intro +
+                profilePrompts.exam.content +
+                profilePrompts.exam.outputInstructions
+            ).toUpperCase();
 
-            // Check for LeetCode-style structured format
-            expect(interviewPrompt).toContain('Approach:');
-            expect(interviewPrompt).toContain('Intuition');
-            expect(interviewPrompt).toContain('Implementation');
-            expect(interviewPrompt).toContain('Complexity Analysis');
-            expect(interviewPrompt).toContain('Algorithm:');
-        });
-
-        it('interview profile requires detailed intuition section', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
-
-            expect(interviewPrompt).toContain('2-4 detailed paragraphs');
-            expect(interviewPrompt).toContain('core logic and reasoning');
-            expect(interviewPrompt).toContain('Key insights');
-            expect(interviewPrompt).toContain('Mathematical concepts');
-        });
-
-        it('exam profile has comment-free code requirement', () => {
-            const examIntro = profilePrompts.exam.intro;
-            const examContent = profilePrompts.exam.content;
-            const examOutputInstructions = profilePrompts.exam.outputInstructions;
-
-            // Check that comment-free requirement is mentioned
-            const fullPrompt = (examIntro + examContent + examOutputInstructions).toUpperCase();
             expect(fullPrompt).toContain('COMMENT-FREE');
             expect(fullPrompt).toContain('ZERO TOLERANCE');
             expect(fullPrompt).toContain('NO EXCEPTIONS');
         });
     });
 
-    describe('System Prompt Generation', () => {
-        it('generates interview prompt correctly', () => {
+    describe('Interview Prompt Generation', () => {
+        it('generates a short plain-text interview prompt', () => {
             const prompt = getSystemPrompt('interview', '', true);
 
-            expect(prompt).toBeDefined();
-            expect(typeof prompt).toBe('string');
-            expect(prompt.length).toBeGreaterThan(100);
+            expect(prompt).toContain('plain text only');
+            expect(prompt).toContain('Use native spoken English with easy words');
+            expect(prompt).toContain('The first sentence must be a short summary with the core answer');
+            expect(prompt).toContain('After the first sentence, add 3-4 short follow-up sentences');
+        });
+
+        it('avoids the old five-section coding template by default', () => {
+            const prompt = getSystemPrompt('interview', '', true);
+
+            expect(prompt).not.toContain('Approach: [Name]');
+            expect(prompt).not.toContain('FULL 5-SECTION');
+            expect(prompt).not.toContain('MANDATORY 5-SECTION FORMAT');
+        });
+
+        it('keeps coding answers code-first with exact signature preservation', () => {
+            const prompt = getSystemPrompt('interview', '', true);
+
+            expect(prompt).toContain('Solve immediately and put the code first');
+            expect(prompt).toContain('Preserve the exact function signature');
+            expect(prompt).toContain('Never change parameter names');
         });
 
         it('includes custom prompt when provided', () => {
@@ -63,7 +65,7 @@ describe('Prompt System Tests', () => {
             expect(prompt).toContain(customPrompt);
         });
 
-        it('includes search usage when enabled', () => {
+        it('includes search guidance only when enabled', () => {
             const promptWithSearch = getSystemPrompt('interview', '', true);
             const promptWithoutSearch = getSystemPrompt('interview', '', false);
 
@@ -71,92 +73,48 @@ describe('Prompt System Tests', () => {
             expect(promptWithoutSearch).not.toContain('SEARCH TOOL USAGE');
         });
 
-        it('defaults to interview prompt for unknown profiles', () => {
+        it('defaults unknown profiles to the fast interview prompt', () => {
             const unknownPrompt = getSystemPrompt('unknown-profile', '', true);
             const interviewPrompt = getSystemPrompt('interview', '', true);
 
             expect(unknownPrompt).toBe(interviewPrompt);
         });
-    });
 
-    describe('Coding Question Format Requirements', () => {
-        it('requires exact function signature preservation', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
+        it('uses the same plain-text strategy for condensed Groq prompts', () => {
+            const prompt = getCondensedSystemPrompt('interview', 'Use Java');
 
-            expect(interviewPrompt).toContain('EXACT FUNCTION SIGNATURE');
-            expect(interviewPrompt).toContain('NEVER change parameter names');
-            expect(interviewPrompt).toContain('PRESERVE');
-        });
-
-        it('specifies 5-section structure', () => {
-            const outputInstructions = profilePrompts.interview.outputInstructions;
-
-            expect(outputInstructions).toContain('Approach');
-            expect(outputInstructions).toContain('Intuition');
-            expect(outputInstructions).toContain('Implementation');
-            expect(outputInstructions).toContain('Complexity Analysis');
-            expect(outputInstructions).toContain('Algorithm');
-        });
-
-        it('requires complexity analysis with O notation', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
-
-            expect(interviewPrompt).toContain('Time complexity: O(...)');
-            expect(interviewPrompt).toContain('Space complexity: O(...)');
-            expect(interviewPrompt).toContain('brief explanation');
+            expect(prompt).toContain('plain text only');
+            expect(prompt).toContain('Use Java');
+            expect(prompt).not.toContain('Approach: [Name]');
         });
     });
 
-    describe('Response Format Validation', () => {
-        it('interview mode requires concise conversational responses', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
+    describe('Gemini Interview Hints', () => {
+        it('keeps text-only interview hints short and plain text', () => {
+            const hint = getGeminiMessageHint(false, 'interview');
 
-            expect(interviewPrompt).toContain('CONCISE');
-            expect(interviewPrompt).toContain('2-4 sentences');
-            expect(interviewPrompt).toContain('conversational');
+            expect(hint).toContain('First sentence: short summary with the core answer');
+            expect(hint).toContain('Then add 3-4 short follow-up sentences');
+            expect(hint).toContain('No markdown emphasis');
+            expect(hint).not.toContain('FULL 5-SECTION');
         });
 
-        it('specifies natural fillers for interview responses', () => {
-            const interviewPrompt = profilePrompts.interview.formatRequirements;
+        it('keeps screenshot interview hints code-first and unstructured', () => {
+            const hint = getGeminiMessageHint(true, 'interview');
 
-            expect(interviewPrompt).toContain('Well,');
-            expect(interviewPrompt).toContain('Actually,');
-            expect(interviewPrompt).toContain('You know,');
+            expect(hint).toContain('Return the working code first');
+            expect(hint).toContain('Preserve the EXACT function signature');
+            expect(hint).toContain('state the key difference in the first sentence');
         });
+    });
 
-        it('exam mode requires direct answers only', () => {
+    describe('Exam Prompt Stability', () => {
+        it('exam mode still requires direct answers only', () => {
             const examPrompt = profilePrompts.exam.formatRequirements;
 
             expect(examPrompt).toContain('MCQ');
             expect(examPrompt).toContain('NO explanations');
             expect(examPrompt).toContain('ONLY the final answer');
-        });
-    });
-
-    describe('Language Support', () => {
-        it('has language instruction section', () => {
-            const prompt = getSystemPrompt('interview', '', true);
-
-            // The language instruction is added dynamically in gemini.js
-            // Here we just verify the base prompt structure supports it
-            expect(prompt).toBeDefined();
-        });
-    });
-
-    describe('Dual Mode Support', () => {
-        it('interview profile supports both regular and coding questions', () => {
-            const interviewPrompt = profilePrompts.interview.content;
-
-            expect(interviewPrompt).toContain('CODING QUESTION');
-            expect(interviewPrompt).toContain('APTITUDE');
-        });
-
-        it('exam profile has separate handling for different question types', () => {
-            const examPrompt = profilePrompts.exam.content;
-
-            expect(examPrompt).toContain('MCQ');
-            expect(examPrompt).toContain('Coding');
-            expect(examPrompt).toContain('Technical');
         });
     });
 });

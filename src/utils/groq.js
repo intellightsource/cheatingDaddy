@@ -26,7 +26,7 @@ let conversationHistory = [];
 let currentSystemPrompt = '';
 
 // Minimum audio duration in seconds before sending to Groq (to avoid sending tiny clips)
-const MIN_AUDIO_DURATION_SECONDS = 1.5; // Reduced since we now only buffer speech
+const MIN_AUDIO_DURATION_SECONDS = 1.0; // Allow shorter interview questions to flush sooner
 const SAMPLE_RATE = 24000; // 24kHz as used in the app
 const BYTES_PER_SAMPLE = 2; // 16-bit PCM
 
@@ -40,12 +40,12 @@ const SPEECH_RMS_THRESHOLD = 500; // RMS above this is considered speech
 // Speech state tracking for smarter flush
 let lastSpeechTime = 0; // Timestamp of last detected speech
 let isSpeaking = false; // Currently in speech segment
-const SILENCE_AFTER_SPEECH_MS = 1500; // Wait 1.5 seconds of silence after speech before flushing
-const POST_SPEECH_CONTEXT_MS = 500; // Include 0.5s of silence after speech ends
+const SILENCE_AFTER_SPEECH_MS = 900; // Flush sooner after speech ends for faster answers
+const POST_SPEECH_CONTEXT_MS = 300; // Keep a small tail without adding much latency
 
 // Periodic check timer
 let checkTimer = null;
-const CHECK_INTERVAL_MS = 500; // Check every 500ms for faster response
+const CHECK_INTERVAL_MS = 250; // Check more frequently so end-of-speech is detected sooner
 
 // Store selected model for chat completion
 let selectedLlamaModel = 'llama-4-maverick';
@@ -60,12 +60,12 @@ let storedLanguageName = 'English';
 let generationSettings = {
     temperature: 0.7,
     topP: 0.95,
-    maxOutputTokens: 4096, // Default for interview mode, allows detailed technical answers
+    maxOutputTokens: 1024, // Default for interview mode, favors faster spoken answers
 };
 
-const VOICE_FAST_MAX_TOKENS = 1536;
-const VOICE_HISTORY_LIMIT_WITH_SCREEN = 6;
-const VOICE_HISTORY_LIMIT_TEXT_ONLY = 8;
+const VOICE_FAST_MAX_TOKENS = 896;
+const VOICE_HISTORY_LIMIT_WITH_SCREEN = 3;
+const VOICE_HISTORY_LIMIT_TEXT_ONLY = 4;
 const VOICE_SCREENSHOT_SIZE = { width: 1280, height: 720 };
 const VOICE_SCREENSHOT_JPEG_QUALITY = 60;
 
@@ -94,7 +94,8 @@ function buildVoiceAndScreenPrompt(transcription, hasScreenContext) {
 
 Use the screenshot to correct speech recognition mistakes and identify the exact question.
 If speech and screen differ, trust the screen question.
-Answer directly.`;
+Answer directly in plain text.
+Start with the answer immediately.`;
 }
 
 function isLikelyQuestionTranscription(transcription) {
@@ -109,16 +110,10 @@ function isLikelyQuestionTranscription(transcription) {
     }
 
     const lower = normalized.toLowerCase();
+    const questionPattern = /^(what|why|how|when|where|who|which|whom|is|are|am|do|does|did|have|has|had|can|could|would|will|should|may|might)\b/;
+    const promptPattern = /^(tell me|explain|describe|walk me through|give me|difference between|what is|what are|how would|why do)\b/;
 
-    // Common interview-style question starters
-    const questionStarters = [
-        'what ', 'why ', 'how ', 'when ', 'where ', 'who ', 'which ', 'whom ',
-        'can you', 'could you', 'would you', 'will you', 'do you', 'did you', 'are you', 'is it',
-        'tell me', 'explain', 'describe', 'walk me through', 'give me',
-        'difference between', 'what is', 'what are', 'how would', 'why do',
-    ];
-
-    if (questionStarters.some(prefix => lower.startsWith(prefix) || lower.includes(` ${prefix}`))) {
+    if (questionPattern.test(lower) || promptPattern.test(lower)) {
         return true;
     }
 
