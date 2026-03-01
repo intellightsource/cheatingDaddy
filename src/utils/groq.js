@@ -97,6 +97,35 @@ If speech and screen differ, trust the screen question.
 Answer directly.`;
 }
 
+function isLikelyQuestionTranscription(transcription) {
+    const normalized = String(transcription || '').trim();
+    if (!normalized) {
+        return false;
+    }
+
+    // Strong signal: explicit question mark
+    if (normalized.includes('?')) {
+        return true;
+    }
+
+    const lower = normalized.toLowerCase();
+
+    // Common interview-style question starters
+    const questionStarters = [
+        'what ', 'why ', 'how ', 'when ', 'where ', 'who ', 'which ', 'whom ',
+        'can you', 'could you', 'would you', 'will you', 'do you', 'did you', 'are you', 'is it',
+        'tell me', 'explain', 'describe', 'walk me through', 'give me',
+        'difference between', 'what is', 'what are', 'how would', 'why do',
+    ];
+
+    if (questionStarters.some(prefix => lower.startsWith(prefix) || lower.includes(` ${prefix}`))) {
+        return true;
+    }
+
+    // Statements like "I think...", "my answer is..." should not trigger.
+    return false;
+}
+
 async function captureCurrentScreenBase64() {
     try {
         const sources = await desktopCapturer.getSources({
@@ -764,6 +793,16 @@ async function processAudioBuffer(model = null) {
 
         const screenContext = await screenCapturePromise;
         const hasScreenContext = !!screenContext;
+
+        if (!isLikelyQuestionTranscription(transcription)) {
+            console.log('[GROQ] Skipping non-question speech segment');
+            sendToRenderer('groq-transcription', transcription);
+            sendToRenderer('update-status', 'Listening...');
+            isSpeaking = false;
+            lastSpeechTime = 0;
+            return null;
+        }
+
         const fusedPrompt = buildVoiceAndScreenPrompt(transcription, hasScreenContext);
 
         // Send transcription to renderer
@@ -851,6 +890,16 @@ async function flushAudioBuffer(model = null) {
 
         const screenContext = await screenCapturePromise;
         const hasScreenContext = !!screenContext;
+
+        if (!isLikelyQuestionTranscription(transcription)) {
+            console.log('[GROQ] Skipping non-question speech segment (flush)');
+            sendToRenderer('groq-transcription', transcription);
+            sendToRenderer('update-status', 'Listening...');
+            isSpeaking = false;
+            lastSpeechTime = 0;
+            return null;
+        }
+
         const fusedPrompt = buildVoiceAndScreenPrompt(transcription, hasScreenContext);
 
         sendToRenderer('groq-transcription', transcription);
